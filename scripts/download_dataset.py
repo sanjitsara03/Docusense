@@ -147,7 +147,7 @@ def main() -> None:
 
     for split in args.splits:
         print(f"Loading {split} split from Hugging Face...")
-        ds = load_dataset("chainyo/rvl-cdip", split=split, streaming=False)
+        ds = load_dataset("chainyo/rvl-cdip", split=split, streaming=True)
         print(f"Saving {split}...")
         if use_s3:
             save_split_s3(ds, split, bucket, prefix)
