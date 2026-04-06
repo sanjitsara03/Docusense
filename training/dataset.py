@@ -96,7 +96,7 @@ class RVLCDIPDataset(Dataset):
                     continue
                 img_path = self.root / rel_path
                 self.samples.append((img_path, LABEL_MAP[orig_class]))
-
+        #Allows limiting the number of samples balanced across classes for faster testing.
         if max_samples is not None:
             per_class = max_samples // NUM_CLASSES
             buckets: dict[int, list] = {i: [] for i in range(NUM_CLASSES)}
