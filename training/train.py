@@ -9,6 +9,7 @@ Hyperparameters (passed as CLI args by SageMaker):
 
 SageMaker environment variables used:
   SM_CHANNEL_TRAIN   path to training data
+  SM_CHANNEL_VAL     path to validation data (separate channel in pipeline)
   SM_MODEL_DIR       where to write the final model artifact
   SM_CHECKPOINT_DIR  where to write/read checkpoints (spot resumption)
   SM_NUM_GPUS        number of GPUs on the instance
@@ -35,9 +36,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--max-samples", type=int, default=None,
                         help="Cap dataset size — useful for local testing")
-    # SageMaker injects these automatically; kept as args for local overrides
+    # SageMaker injects these automatically; kept as args for local overrides.
+    # SM_CHANNEL_VAL is set when the pipeline maps train/val as separate channels;
+    # falls back to --data-dir so local runs (single root with all splits) still work.
     parser.add_argument("--data-dir", type=str,
                         default=os.environ.get("SM_CHANNEL_TRAIN", "data"))
+    parser.add_argument("--val-dir", type=str,
+                        default=os.environ.get("SM_CHANNEL_VAL"))
     parser.add_argument("--model-dir", type=str,
                         default=os.environ.get("SM_MODEL_DIR", "model_output"))
     parser.add_argument("--checkpoint-dir", type=str,
@@ -149,8 +154,11 @@ def main() -> None:
     device = torch.device("cuda" if num_gpus > 0 and torch.cuda.is_available() else "cpu")
     print(f"Training on {device} | GPUs: {num_gpus}")
 
+    # In the SageMaker pipeline train/val are separate input channels.
+    # val_dir falls back to data_dir for local runs where both splits live under one root.
+    val_dir = args.val_dir or args.data_dir
     train_dataset = RVLCDIPDataset(args.data_dir, "train", max_samples=args.max_samples)
-    val_dataset = RVLCDIPDataset(args.data_dir, "val", max_samples=args.max_samples)
+    val_dataset = RVLCDIPDataset(val_dir, "val", max_samples=args.max_samples)
     print(f"Train: {len(train_dataset)} samples | Val: {len(val_dataset)} samples")
 
     train_loader = DataLoader(

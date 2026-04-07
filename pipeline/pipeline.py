@@ -26,7 +26,7 @@ from sagemaker.workflow.parameters import ParameterFloat, ParameterInteger
 from sagemaker.workflow.pipeline import Pipeline
 from sagemaker.workflow.pipeline_context import PipelineSession
 from sagemaker.workflow.properties import PropertyFile
-from sagemaker.workflow.steps import ProcessingStep, TrainingStep
+from sagemaker.workflow.steps import ProcessingStep, TrainingStep, CacheConfig
 from sagemaker.model import Model
 
 
@@ -74,10 +74,14 @@ def main() -> None:
         sagemaker_session=sagemaker_session,
     )
 
+    # Cache preprocess and evaluate — skip if inputs + code unchanged..
+    cache_config = CacheConfig(enable_caching=True, expire_after="30d")
+
     preprocess_step = ProcessingStep(
         name="Preprocess",
         processor=processor,
         code="pipeline/preprocess.py",
+        cache_config=cache_config,
         inputs=[
             ProcessingInput(
                 source=s3_data_uri,
@@ -157,6 +161,7 @@ def main() -> None:
         name="Evaluate",
         processor=eval_processor,
         code="training/evaluate.py",
+        cache_config=cache_config,
         inputs=[
             ProcessingInput(
                 source=train_step.properties.ModelArtifacts.S3ModelArtifacts,
