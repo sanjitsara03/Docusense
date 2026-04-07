@@ -1,0 +1,19 @@
+{
+  "best_val_acc": 0.5,
+  "epochs": [
+    {
+      "epoch": 1,
+      "train_loss": 1.5535,
+      "train_acc": 0.1667,
+      "val_loss": 1.5148,
+      "val_acc": 0.5
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.9107,
+      "train_acc": 0.8333,
+      "val_loss": 1.4248,
+      "val_acc": 0.5
+    }
+  ]
+}

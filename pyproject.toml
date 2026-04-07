@@ -9,6 +9,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.4.4",
     "pillow>=12.1.1",
+    "sagemaker>=2.200,<3",
     "scikit-learn>=1.8.0",
     "torch>=2.11.0",
     "torchvision>=0.26.0",
