@@ -10,14 +10,6 @@ Steps:
 Usage:
   python pipeline/pipeline.py --role <iam-role-arn> --bucket <s3-bucket>
 
-  # Override defaults:
-  python pipeline/pipeline.py \
-    --role arn:aws:iam::898322960370:role/service-role/AmazonSageMaker-ExecutionRole-20260406T143837 \
-    --bucket docusense-data \
-    --prefix rvl-cdip \
-    --region us-east-2 \
-    --epochs 10 \
-    --run
 """
 
 import argparse
@@ -65,19 +57,18 @@ def main() -> None:
     s3_data_uri = f"s3://{args.bucket}/{args.prefix}"
     s3_output_uri = f"s3://{args.bucket}/pipeline-output"
 
-    # Pipeline parameters (can be overridden at execution time)
+    # Pipeline parameters 
     p_epochs = ParameterInteger(name="Epochs", default_value=args.epochs)
     p_batch_size = ParameterInteger(name="BatchSize", default_value=args.batch_size)
     p_lr = ParameterFloat(name="LearningRate", default_value=args.lr)
     p_accuracy_threshold = ParameterFloat(name="AccuracyThreshold", default_value=args.accuracy_threshold)
 
-    # -------------------------------------------------------------------------
+
     # Step 1: Preprocessing
-    # -------------------------------------------------------------------------
     processor = ScriptProcessor(
         image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-training:2.1.0-cpu-py310",
         command=["python3"],
-        instance_type="ml.m5.xlarge",
+        instance_type="ml.m5.large",
         instance_count=1,
         role=args.role,
         sagemaker_session=sagemaker_session,
@@ -112,9 +103,7 @@ def main() -> None:
         ],
     )
 
-    # -------------------------------------------------------------------------
     # Step 2: Training (spot instance)
-    # -------------------------------------------------------------------------
     estimator = PyTorch(
         entry_point="train.py",
         source_dir="training",
@@ -123,9 +112,8 @@ def main() -> None:
         instance_count=1,
         framework_version="2.1.0",
         py_version="py310",
-        use_spot_instances=True,
-        max_run=3600,           # 1 hour max — cost guard
-        max_wait=7200,          # wait up to 2 hours for spot capacity
+        use_spot_instances=False,
+        max_run=3600,           # 1 hour max
         checkpoint_s3_uri=f"{s3_output_uri}/checkpoints",
         checkpoint_local_path="/opt/ml/checkpoints",
         hyperparameters={
@@ -149,13 +137,11 @@ def main() -> None:
         },
     )
 
-    # -------------------------------------------------------------------------
     # Step 3: Evaluation
-    # -------------------------------------------------------------------------
     eval_processor = ScriptProcessor(
         image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-training:2.1.0-cpu-py310",
         command=["python3"],
-        instance_type="ml.m5.xlarge",
+        instance_type="ml.m5.large",
         instance_count=1,
         role=args.role,
         sagemaker_session=sagemaker_session,
@@ -196,9 +182,8 @@ def main() -> None:
         property_files=[eval_report],
     )
 
-    # -------------------------------------------------------------------------
+    # 
     # Step 4: Conditional registration (accuracy > threshold)
-    # -------------------------------------------------------------------------
     model = Model(
         image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-inference:2.1.0-cpu-py310",
         model_data=train_step.properties.ModelArtifacts.S3ModelArtifacts,
@@ -234,9 +219,7 @@ def main() -> None:
         else_steps=[],
     )
 
-    # -------------------------------------------------------------------------
     # Build + run pipeline
-    # -------------------------------------------------------------------------
     pipeline = Pipeline(
         name="DocuSensePipeline",
         parameters=[p_epochs, p_batch_size, p_lr, p_accuracy_threshold],
