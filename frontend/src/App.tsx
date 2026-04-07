@@ -154,18 +154,6 @@ export default function App() {
           </span>
         </div>
 
-        <span
-          className="site-header-badge"
-          style={{
-            fontFamily: 'var(--font-body)',
-            fontSize: '11px',
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-            color: 'var(--color-amber)',
-          }}
-        >
-          EfficientNet-B0 · SageMaker
-        </span>
       </header>
 
       {/* Main */}
