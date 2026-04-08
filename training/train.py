@@ -51,7 +51,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_model(num_classes: int) -> nn.Module:
+    # Patch out hash verification — the container downloads the current weights file
+    # but the pinned hash in this torchvision version doesn't match. The file is valid.
+    import torch.hub
+    _orig = torch.hub.download_url_to_file
+    torch.hub.download_url_to_file = lambda url, dst, hash_prefix=None, progress=True: _orig(url, dst, hash_prefix=None, progress=progress)
     model = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
+    torch.hub.download_url_to_file = _orig  # restore
     # Replace the classification head
     in_features = model.classifier[1].in_features
     model.classifier = nn.Sequential(

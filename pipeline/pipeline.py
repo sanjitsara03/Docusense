@@ -57,7 +57,7 @@ def main() -> None:
     s3_data_uri = f"s3://{args.bucket}/{args.prefix}"
     s3_output_uri = f"s3://{args.bucket}/pipeline-output"
 
-    # Pipeline parameters 
+    # Pipeline parameters
     p_epochs = ParameterInteger(name="Epochs", default_value=args.epochs)
     p_batch_size = ParameterInteger(name="BatchSize", default_value=args.batch_size)
     p_lr = ParameterFloat(name="LearningRate", default_value=args.lr)
@@ -68,7 +68,7 @@ def main() -> None:
     processor = ScriptProcessor(
         image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-training:2.1.0-cpu-py310",
         command=["python3"],
-        instance_type="ml.m5.large",
+        instance_type="ml.m5.2xlarge",
         instance_count=1,
         role=args.role,
         sagemaker_session=sagemaker_session,
@@ -112,7 +112,7 @@ def main() -> None:
         entry_point="train.py",
         source_dir="training",
         role=args.role,
-        instance_type="ml.p3.2xlarge",
+        instance_type="ml.g4dn.4xlarge",
         instance_count=1,
         framework_version="2.1.0",
         py_version="py310",
@@ -187,7 +187,7 @@ def main() -> None:
         property_files=[eval_report],
     )
 
-    # 
+    #
     # Step 4: Conditional registration (accuracy > threshold)
     model = Model(
         image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-inference:2.1.0-cpu-py310",
@@ -243,4 +243,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
