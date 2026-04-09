@@ -1,8 +1,7 @@
 """
-LLM extraction agents — one Pydantic schema per document type.
+LLM extraction agents 
+one Pydantic schema per document type.
 
-Each schema maps to a structured Claude API call. No tool loops,
-no multi-turn — single call with structured output per document.
 """
 
 import base64
@@ -12,13 +11,11 @@ from typing import Union
 import anthropic
 from pydantic import BaseModel
 
-_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-_MODEL = "claude-haiku-4-5-20251001"
+_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+_MODEL = "claude-sonnet-4-6"
 
 
-# ---------------------------------------------------------------------------
-# Extraction schemas — one per doc type
-# ---------------------------------------------------------------------------
+
 
 class LineItem(BaseModel):
     description: str
@@ -91,24 +88,25 @@ _PROMPTS: dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def extract(doc_class: str, image_bytes: bytes) -> BaseModel:
     """
     Extract structured fields from a document image using Claude.
-
-    Args:
-        doc_class: One of "invoice", "form", "letter", "email", "budget"
-        image_bytes: Raw image bytes (PNG or JPEG)
-
-    Returns:
-        Populated Pydantic model for the given doc_class
+    Returns: Populated Pydantic model for the given doc_class
     """
     schema = _SCHEMA_MAP[doc_class]
     prompt = _PROMPTS[doc_class]
     image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+
+    # Detect media type from magic bytes
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        media_type = "image/jpeg"
+    elif image_bytes[:4] == b"\x89PNG":
+        media_type = "image/png"
+    elif image_bytes[:4] in (b"GIF8", b"GIF9"):
+        media_type = "image/gif"
+    else:
+        media_type = "image/png"  # fallback
 
     response = _client.messages.create(
         model=_MODEL,
@@ -122,7 +120,7 @@ def extract(doc_class: str, image_bytes: bytes) -> BaseModel:
                         "type": "image",
                         "source": {
                             "type": "base64",
-                            "media_type": "image/png",
+                            "media_type": media_type,
                             "data": image_b64,
                         },
                     },
@@ -135,10 +133,10 @@ def extract(doc_class: str, image_bytes: bytes) -> BaseModel:
         ],
     )
 
+    import json, re
     raw = response.content[0].text.strip()
     # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+    if match:
+        raw = match.group(1).strip()
     return schema.model_validate_json(raw)

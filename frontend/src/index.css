@@ -162,24 +162,6 @@ body {
   }
 }
 
-/* ── Heatmap side-by-side grid ──────────────────────────────────── */
-
-.heatmap-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;                         /* renders as divider line via background */
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  background: var(--color-border);
-}
-
-@media (max-width: 600px) {
-  .heatmap-grid {
-    grid-template-columns: 1fr;
-    gap: 12px;
-    background: transparent;        /* no divider when stacked */
-  }
-}
 
 /* ── Section divider ────────────────────────────────────────────── */
 

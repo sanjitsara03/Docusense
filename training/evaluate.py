@@ -1,10 +1,9 @@
 """
-Evaluation script — runs after training, produces metrics + Grad-CAM samples.
+Evaluation script — runs after training, produces metrics.
 
 Outputs written to --output-dir:
   metrics.json          accuracy + per-class F1 + confusion matrix
-  confusion_matrix.png  heatmap visualization
-  gradcam/              Grad-CAM overlays for one sample per class
+  confusion_matrix.png  confusion matrix visualization
 
 SageMaker Pipelines calls this as a processing step. The evaluate step reads
 metrics.json to decide whether to register the model (accuracy > 0.90).
@@ -20,14 +19,10 @@ matplotlib.use("Agg")  # no display needed
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
-from PIL import Image
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.metrics import confusion_matrix, f1_score
 from torch.utils.data import DataLoader
-from torchvision import transforms
-from torchvision.models import efficientnet_b0
 
-from dataset import CLASS_NAMES, NUM_CLASSES, RVLCDIPDataset, get_transforms
+from dataset import CLASS_NAMES, NUM_CLASSES, RVLCDIPDataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,115 +39,21 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_model(model_path: str, device: torch.device) -> torch.nn.Module:
+    import tarfile
     from train import build_model
+    # SageMaker ProcessingJob downloads model artifacts as model.tar.gz — extract if needed
+    model_path_obj = Path(model_path)
+    if not model_path_obj.exists():
+        tar_path = model_path_obj.parent / "model.tar.gz"
+        if tar_path.exists():
+            with tarfile.open(tar_path) as tar:
+                tar.extractall(model_path_obj.parent)
     model = build_model(NUM_CLASSES)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
     return model
 
-
-# ---------------------------------------------------------------------------
-# Grad-CAM
-# ---------------------------------------------------------------------------
-
-class GradCAM:
-    """
-    Grad-CAM for EfficientNet-B0.
-    Hooks into the last conv block (features[-1]) to capture activations + gradients.
-    """
-
-    def __init__(self, model: torch.nn.Module) -> None:
-        self.model = model
-        self._activations: torch.Tensor | None = None
-        self._gradients: torch.Tensor | None = None
-
-        # EfficientNet-B0: features is a Sequential, last block is features[-1]
-        target_layer = model.features[-1]
-        target_layer.register_forward_hook(self._save_activation)
-        target_layer.register_full_backward_hook(self._save_gradient)
-
-    def _save_activation(self, module, input, output) -> None:
-        self._activations = output.detach()
-
-    def _save_gradient(self, module, grad_input, grad_output) -> None:
-        self._gradients = grad_output[0].detach()
-
-    def generate(self, image_tensor: torch.Tensor, class_idx: int) -> np.ndarray:
-        """
-        Returns a (224, 224) float32 heatmap in [0, 1].
-        image_tensor: (1, 3, 224, 224)
-        """
-        self.model.zero_grad()
-        output = self.model(image_tensor)
-        score = output[0, class_idx]
-        score.backward()
-
-        # Global average pool the gradients over spatial dims
-        weights = self._gradients.mean(dim=(2, 3), keepdim=True)  # (1, C, 1, 1)
-        cam = (weights * self._activations).sum(dim=1, keepdim=True)  # (1, 1, H, W)
-        cam = F.relu(cam)
-        cam = F.interpolate(cam, size=(224, 224), mode="bilinear", align_corners=False)
-
-        cam = cam.squeeze().cpu().numpy()
-        cam_min, cam_max = cam.min(), cam.max()
-        if cam_max > cam_min:
-            cam = (cam - cam_min) / (cam_max - cam_min)
-        return cam.astype(np.float32)
-
-
-def overlay_heatmap(image_tensor: torch.Tensor, heatmap: np.ndarray) -> np.ndarray:
-    """Blend heatmap onto the original image. Returns (224, 224, 3) uint8."""
-    # Denormalize
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-    img = image_tensor.squeeze().permute(1, 2, 0).cpu().numpy()
-    img = (img * std + mean).clip(0, 1)
-
-    cmap = plt.get_cmap("jet")
-    colored = cmap(heatmap)[:, :, :3]  # (224, 224, 3) in [0, 1]
-    blended = (0.5 * img + 0.5 * colored).clip(0, 1)
-    return (blended * 255).astype(np.uint8)
-
-
-def save_gradcam_samples(
-    model: torch.nn.Module,
-    dataset: RVLCDIPDataset,
-    output_dir: Path,
-    device: torch.device,
-    n_per_class: int = 2,
-) -> None:
-    gradcam = GradCAM(model)
-    gradcam_dir = output_dir / "gradcam"
-    gradcam_dir.mkdir(parents=True, exist_ok=True)
-
-    # Collect indices per class
-    buckets: dict[int, list[int]] = {i: [] for i in range(NUM_CLASSES)}
-    for idx, (_, label) in enumerate(dataset.samples):
-        if len(buckets[label]) < n_per_class:
-            buckets[label].append(idx)
-        if all(len(v) >= n_per_class for v in buckets.values()):
-            break
-
-    for class_idx, indices in buckets.items():
-        class_name = CLASS_NAMES[class_idx]
-        for i, sample_idx in enumerate(indices):
-            image_tensor, label = dataset[sample_idx]
-            inp = image_tensor.unsqueeze(0).to(device)
-
-            with torch.enable_grad():
-                heatmap = gradcam.generate(inp, class_idx)
-
-            overlay = overlay_heatmap(image_tensor, heatmap)
-            out_path = gradcam_dir / f"{class_name}_{i}.png"
-            Image.fromarray(overlay).save(out_path)
-
-    print(f"Grad-CAM samples saved to {gradcam_dir}")
-
-
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
 
 def run_evaluation(
     model: torch.nn.Module,
@@ -187,7 +88,6 @@ def save_confusion_matrix(cm: np.ndarray, output_dir: Path) -> None:
         title="Confusion Matrix",
     )
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-    # Annotate cells
     thresh = cm.max() / 2.0
     for i in range(NUM_CLASSES):
         for j in range(NUM_CLASSES):
@@ -247,9 +147,6 @@ def main() -> None:
 
     save_confusion_matrix(cm, output_dir)
     print(f"Confusion matrix saved to {output_dir / 'confusion_matrix.png'}")
-
-    # Grad-CAM — run with gradients enabled even though model is in eval mode
-    save_gradcam_samples(model, test_dataset, output_dir, device)
 
 
 if __name__ == "__main__":

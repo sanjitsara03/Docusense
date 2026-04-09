@@ -1,15 +1,6 @@
-"""
-Deploy the latest approved model from the DocuSenseModels registry to a
-real-time SageMaker endpoint.
+#Deploys the latest approved model from the DocuSenseModels registry to a
+#sageMaker endpoint
 
-Usage:
-  python scripts/deploy_endpoint.py
-
-The endpoint will be named "docusense-endpoint" on ml.m5.large.
-Set SAGEMAKER_ENDPOINT_NAME env var in your FastAPI backend to match.
-
-Remember to run delete_endpoint.py when done to avoid idle charges.
-"""
 
 import argparse
 

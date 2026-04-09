@@ -1,7 +1,6 @@
 export interface AnalyzeResponse {
   doc_class: string;
   confidence: number;
-  heatmap_b64: string | null;
   extracted_fields: Record<string, unknown> | null;
   sagemaker_latency_ms: number;
   llm_latency_ms: number | null;

@@ -91,11 +91,11 @@ class RVLCDIPDataset(Dataset):
                 if not line:
                     continue
                 rel_path, class_str = line.rsplit(" ", 1)
-                orig_class = int(class_str)
-                if orig_class not in SELECTED_CLASSES:
+                label = int(class_str)
+                if label >= NUM_CLASSES:
                     continue
                 img_path = self.root / rel_path
-                self.samples.append((img_path, LABEL_MAP[orig_class]))
+                self.samples.append((img_path, label))
         #Allows limiting the number of samples balanced across classes for faster testing.
         if max_samples is not None:
             per_class = max_samples // NUM_CLASSES

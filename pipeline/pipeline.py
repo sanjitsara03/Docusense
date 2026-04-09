@@ -2,14 +2,14 @@
 DocuSense SageMaker Pipeline.
 
 Steps:
-  1. PreprocessingStep  — validate + resize images (ml.m5.xlarge)
-  2. TrainingStep       — EfficientNet-B0 fine-tune (ml.p3.2xlarge spot)
-  3. EvaluationStep     — metrics + Grad-CAM (ml.m5.xlarge)
-  4. ConditionStep      — register model only if accuracy > 0.90
+  Preprocessing        - validate + resize images (ml.m5.2xlarge, parallelized)
+  Training             - EfficientNet-B0 fine-tune (ml.g4dn.4xlarge)
+  Evaluation           - metrics (ml.m5.large)
+  Conditional register - register model only if accuracy > 0.90
 
 Usage:
-  python pipeline/pipeline.py --role <iam-role-arn> --bucket <s3-bucket>
-
+  uv run pipeline/pipeline.py --run                    # full pipeline
+  uv run pipeline/pipeline.py --skip-preprocess --run  # skip to training using existing S3 data
 """
 
 import argparse
@@ -42,7 +42,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--accuracy-threshold", type=float, default=0.90)
     parser.add_argument("--run", action="store_true",
-                        help="Start the pipeline execution after creating it")
+                        help="Start the pipeline execution after upserting")
+    parser.add_argument("--skip-preprocess", action="store_true",
+                        help="Skip preprocessing — use existing preprocessed data in S3")
     return parser.parse_args()
 
 
@@ -56,58 +58,68 @@ def main() -> None:
 
     s3_data_uri = f"s3://{args.bucket}/{args.prefix}"
     s3_output_uri = f"s3://{args.bucket}/pipeline-output"
+    s3_preprocessed = f"{s3_output_uri}/preprocessed"
 
-    # Pipeline parameters
     p_epochs = ParameterInteger(name="Epochs", default_value=args.epochs)
     p_batch_size = ParameterInteger(name="BatchSize", default_value=args.batch_size)
     p_lr = ParameterFloat(name="LearningRate", default_value=args.lr)
     p_accuracy_threshold = ParameterFloat(name="AccuracyThreshold", default_value=args.accuracy_threshold)
 
-
-    # Step 1: Preprocessing
-    processor = ScriptProcessor(
-        image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-training:2.1.0-cpu-py310",
-        command=["python3"],
-        instance_type="ml.m5.2xlarge",
-        instance_count=1,
-        role=args.role,
-        sagemaker_session=sagemaker_session,
-    )
-
-    # Cache preprocess and evaluate — skip if inputs + code unchanged..
     cache_config = CacheConfig(enable_caching=True, expire_after="30d")
+    pipeline_steps = []
 
-    preprocess_step = ProcessingStep(
-        name="Preprocess",
-        processor=processor,
-        code="pipeline/preprocess.py",
-        cache_config=cache_config,
-        inputs=[
-            ProcessingInput(
-                source=s3_data_uri,
-                destination="/opt/ml/processing/input/data",
-            )
-        ],
-        outputs=[
-            ProcessingOutput(
-                output_name="train",
-                source="/opt/ml/processing/output/train",
-                destination=f"{s3_output_uri}/preprocessed/train",
-            ),
-            ProcessingOutput(
-                output_name="val",
-                source="/opt/ml/processing/output/val",
-                destination=f"{s3_output_uri}/preprocessed/val",
-            ),
-            ProcessingOutput(
-                output_name="test",
-                source="/opt/ml/processing/output/test",
-                destination=f"{s3_output_uri}/preprocessed/test",
-            ),
-        ],
-    )
+    # Preprocessing
+    if args.skip_preprocess:
+        train_s3 = f"{s3_preprocessed}/train"
+        val_s3   = f"{s3_preprocessed}/val"
+        test_s3  = f"{s3_preprocessed}/test"
+        print(f"Skipping preprocessing — using existing data at {s3_preprocessed}")
+    else:
+        processor = ScriptProcessor(
+            image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-training:2.1.0-cpu-py310",
+            command=["python3"],
+            instance_type="ml.m5.2xlarge",
+            instance_count=1,
+            role=args.role,
+            sagemaker_session=sagemaker_session,
+        )
 
-    # Step 2: Training (spot instance)
+        preprocess_step = ProcessingStep(
+            name="Preprocess",
+            processor=processor,
+            code="pipeline/preprocess.py",
+            cache_config=cache_config,
+            inputs=[
+                ProcessingInput(
+                    source=s3_data_uri,
+                    destination="/opt/ml/processing/input/data",
+                )
+            ],
+            outputs=[
+                ProcessingOutput(
+                    output_name="train",
+                    source="/opt/ml/processing/output/train",
+                    destination=f"{s3_preprocessed}/train",
+                ),
+                ProcessingOutput(
+                    output_name="val",
+                    source="/opt/ml/processing/output/val",
+                    destination=f"{s3_preprocessed}/val",
+                ),
+                ProcessingOutput(
+                    output_name="test",
+                    source="/opt/ml/processing/output/test",
+                    destination=f"{s3_preprocessed}/test",
+                ),
+            ],
+        )
+
+        pipeline_steps.append(preprocess_step)
+        train_s3 = preprocess_step.properties.ProcessingOutputConfig.Outputs["train"].S3Output.S3Uri
+        val_s3   = preprocess_step.properties.ProcessingOutputConfig.Outputs["val"].S3Output.S3Uri
+        test_s3  = preprocess_step.properties.ProcessingOutputConfig.Outputs["test"].S3Output.S3Uri
+
+    # Training
     estimator = PyTorch(
         entry_point="train.py",
         source_dir="training",
@@ -117,7 +129,7 @@ def main() -> None:
         framework_version="2.1.0",
         py_version="py310",
         use_spot_instances=False,
-        max_run=3600,           # 1 hour max
+        max_run=14400,
         checkpoint_s3_uri=f"{s3_output_uri}/checkpoints",
         checkpoint_local_path="/opt/ml/checkpoints",
         hyperparameters={
@@ -132,16 +144,13 @@ def main() -> None:
         name="Train",
         estimator=estimator,
         inputs={
-            "train": sagemaker.inputs.TrainingInput(
-                s3_data=preprocess_step.properties.ProcessingOutputConfig.Outputs["train"].S3Output.S3Uri,
-            ),
-            "val": sagemaker.inputs.TrainingInput(
-                s3_data=preprocess_step.properties.ProcessingOutputConfig.Outputs["val"].S3Output.S3Uri,
-            ),
+            "train": sagemaker.inputs.TrainingInput(s3_data=train_s3),
+            "val":   sagemaker.inputs.TrainingInput(s3_data=val_s3),
         },
     )
+    pipeline_steps.append(train_step)
 
-    # Step 3: Evaluation
+    # Evaluation
     eval_processor = ScriptProcessor(
         image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-training:2.1.0-cpu-py310",
         command=["python3"],
@@ -149,6 +158,7 @@ def main() -> None:
         instance_count=1,
         role=args.role,
         sagemaker_session=sagemaker_session,
+        env={"PYTHONPATH": "/opt/ml/processing/input/deps"},
     )
 
     eval_report = PropertyFile(
@@ -168,8 +178,12 @@ def main() -> None:
                 destination="/opt/ml/processing/input/model",
             ),
             ProcessingInput(
-                source=preprocess_step.properties.ProcessingOutputConfig.Outputs["test"].S3Output.S3Uri,
+                source=test_s3,
                 destination="/opt/ml/processing/input/data",
+            ),
+            ProcessingInput(
+                source=f"s3://{args.bucket}/code/",
+                destination="/opt/ml/processing/input/deps",
             ),
         ],
         outputs=[
@@ -181,14 +195,14 @@ def main() -> None:
         ],
         job_arguments=[
             "--model-path", "/opt/ml/processing/input/model/best_model.pt",
-            "--data-dir", "/opt/ml/processing/input/data",
+            "--data-dir",   "/opt/ml/processing/input/data",
             "--output-dir", "/opt/ml/processing/output",
         ],
         property_files=[eval_report],
     )
+    pipeline_steps.append(eval_step)
 
-    #
-    # Step 4: Conditional registration (accuracy > threshold)
+    # Conditional registration
     model = Model(
         image_uri=f"763104351884.dkr.ecr.{args.region}.amazonaws.com/pytorch-inference:2.1.0-cpu-py310",
         model_data=train_step.properties.ModelArtifacts.S3ModelArtifacts,
@@ -223,12 +237,13 @@ def main() -> None:
         if_steps=[register_step],
         else_steps=[],
     )
+    pipeline_steps.append(condition_step)
 
-    # Build + run pipeline
+    # Build and run
     pipeline = Pipeline(
         name="DocuSensePipeline",
         parameters=[p_epochs, p_batch_size, p_lr, p_accuracy_threshold],
-        steps=[preprocess_step, train_step, eval_step, condition_step],
+        steps=pipeline_steps,
         sagemaker_session=pipeline_session,
     )
 

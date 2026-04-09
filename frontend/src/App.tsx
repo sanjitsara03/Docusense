@@ -184,7 +184,7 @@ export default function App() {
                 lineHeight: 1.05,
                 letterSpacing: '-0.01em',
               }}>
-                What kind of document<br />is this?
+                Upload a document.
               </h2>
               <p style={{
                 fontFamily: 'var(--font-body)',
@@ -194,8 +194,7 @@ export default function App() {
                 lineHeight: 1.65,
                 margin: 0,
               }}>
-                Upload a document image. EfficientNet-B0 classifies it, Grad-CAM shows where it looked,
-                and Claude extracts structured fields — all in one call.
+                EfficientNet-B0 classifies it and Claude extracts structured fields — all in one call.
               </p>
             </div>
 
@@ -236,7 +235,7 @@ export default function App() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {(['Classifying document', 'Generating heatmap', 'Extracting fields'] as const).map((step, i) => (
+                {(['Classifying document', 'Extracting fields'] as const).map((step, i) => (
                   <SkeletonStep key={step} label={step} delayMs={i * 180} />
                 ))}
               </div>

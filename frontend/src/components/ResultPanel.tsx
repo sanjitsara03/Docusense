@@ -1,7 +1,6 @@
 import type { AnalyzeResponse } from '../types';
 import { DOC_CLASS_LABELS } from '../types';
 import { ConfidenceBar } from './ConfidenceBar';
-import { HeatmapOverlay } from './HeatmapOverlay';
 import { FieldsTable } from './FieldsTable';
 
 interface ResultPanelProps {
@@ -54,13 +53,6 @@ export function ResultPanel({ data, previewUrl, onReset }: ResultPanelProps) {
       </div>
 
       <hr className="divider" />
-
-      {/* Heatmap */}
-      {data.heatmap_b64 && !isUnknown && (
-        <div style={{ marginBottom: '32px' }}>
-          <HeatmapOverlay original={previewUrl} heatmap={data.heatmap_b64} />
-        </div>
-      )}
 
       {/* Unknown state — show original image only */}
       {isUnknown && (
