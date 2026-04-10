@@ -9,6 +9,7 @@ Uses multiprocessing to parallelize image resizing across all available CPUs.
 """
 
 import argparse
+import json
 import os
 from multiprocessing import Pool
 from pathlib import Path
@@ -35,7 +36,7 @@ def process_image(args: tuple[Path, Path, int]) -> str | None:
         img = Image.open(src).convert("RGB")
         img = img.resize((image_size, image_size), Image.BILINEAR)
         img.save(dst, format="PNG")
-        return None  # signal success — caller reconstructs the label line
+        return None  # signal success -- caller reconstructs the label line
     except Exception as e:
         print(f"  Skipping {src}: {e}")
         return str(src)  # signal failure
@@ -87,6 +88,12 @@ def process_split(
 
     print(f"  {split}: {len(valid_lines)} images processed, {len(failed)} skipped")
 
+    # Log summary to JSON
+    summary = {"split": split, "processed": len(valid_lines), "skipped": len(failed)}
+    summary_file = out_split_dir / "summary.json"
+    with open(summary_file, "w") as f:
+        f.write(json.dumps(summary))
+
 
 def main() -> None:
     args = parse_args()
@@ -98,7 +105,8 @@ def main() -> None:
     print(f"Resize:  {args.image_size}px")
     print(f"Workers: {args.workers}\n")
 
-    for split in ["train", "val", "test"]:
+    splits = ["train", "val", "test"]
+    for split in splits:
         print(f"Processing {split}...")
         process_split(split, input_dir, output_dir, args.image_size, args.workers)
 
